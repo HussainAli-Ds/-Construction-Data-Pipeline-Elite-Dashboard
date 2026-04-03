@@ -1,0 +1,13 @@
+.env
+__pycache__/
+*.pyc
+# Ignore contents but keep folders
+input_files/*
+processed_files/*
+failed_files/*
+logs/*
+
+!input_files/.gitkeep
+!processed_files/.gitkeep
+!failed_files/.gitkeep
+!logs/.gitkeep

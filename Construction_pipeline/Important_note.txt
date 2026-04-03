@@ -1,0 +1,11 @@
+open notepad.
+
+DB_HOST=localhost
+DB_PORT=5433
+DB_NAME=construction_project
+DB_USER=your_user
+DB_PASS=your_password
+
+use your user_name,password
+
+save the file as .env (no name only extension)

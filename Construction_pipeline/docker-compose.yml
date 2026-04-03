@@ -1,0 +1,50 @@
+services:
+  db:
+    image: postgres:15
+    container_name: construction_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  pipeline:
+    build: .
+    container_name: pipeline_app
+    depends_on:
+      - db
+    environment:
+      - BASE_DIR=/app
+      - DB_HOST=db
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - DB_NAME=${DB_NAME}
+    volumes:
+      - ./input_files:/app/input_files
+      - ./processed_files:/app/processed_files
+      - ./failed_files:/app/failed_files
+      - ./logs:/app/logs
+
+  dashboard:
+    build: .
+    container_name: dashboard_app
+    command: streamlit run dashboard/dashboard.py --server.port=8501 --server.address=0.0.0.0
+    depends_on:
+      - db
+    ports:
+      - "8501:8501"
+    environment:
+      - DB_HOST=db
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - DB_NAME=${DB_NAME}
+
+volumes:
+  postgres_data:
