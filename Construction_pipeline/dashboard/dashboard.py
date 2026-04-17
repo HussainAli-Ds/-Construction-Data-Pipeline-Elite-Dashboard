@@ -25,7 +25,12 @@ TABLES = {
     "🏗 Sites": "site_data"
 }
 
-st.set_page_config(page_title="Elite Dashboard", layout="wide")
+st.set_page_config(layout="wide")
+
+# ---------------- FORMAT FUNCTION ----------------
+def format_numbers(df):
+    num_cols = df.select_dtypes(include="number").columns
+    return df.style.format({col: "{:,.0f}" for col in num_cols})
 
 # ---------------- DB ----------------
 @st.cache_data
@@ -36,196 +41,287 @@ def load_data(table):
         conn.close()
         return df
     except Exception as e:
-        st.error(f"❌ DB Error: {e}")
+        st.error(f"DB Error: {e}")
         return pd.DataFrame()
 
 data = {name: load_data(tbl) for name, tbl in TABLES.items()}
 
 # ---------------- HEADER ----------------
-st.title("🚀 Elite Construction Dashboard")
+st.markdown("<h1 style='text-align:center;'>🚀 Elite Executive Dashboard</h1>", unsafe_allow_html=True)
+st.markdown("<h3 style='text-align:center;'>مین ڈیش بورڈ</h3>", unsafe_allow_html=True)
 
-# ---------------- FILTERS ----------------
-col1, col2 = st.columns(2)
+# ---------------- MAIN KPIs ----------------
+lab = data["👷 Labour"]
+mac = data["🚜 Machines"]
+mat = data["📦 Material"]
+mnt = data["🛠 Maintenance"]
 
-all_sites = []
-for df in data.values():
-    if "working_site" in df.columns:
-        all_sites.extend(df["working_site"].dropna().unique())
+total_lab = lab["labour_id"].nunique() if not lab.empty else 0
+total_mac = mac["machine_id"].nunique() if not mac.empty else 0
 
-all_sites = list(set(all_sites))
+total_cost = sum([
+    df["total_cost"].sum() for df in [lab, mat, mnt] if "total_cost" in df.columns
+])
 
-with col1:
-    selected_site = st.selectbox("🏗 Select Site", ["All"] + all_sites)
+c1, c2 = st.columns(2)
+c1.metric("👷 Total Labours (کل مزدور)", total_lab)
+c2.metric("🚜 Total Machines (کل مشینیں)", total_mac)
 
-with col2:
-    selected_date = st.selectbox("📅 Date Filter", ["All", "Today"])
+st.metric("💰 Total Cost PKR (کل لاگت)", f"{int(total_cost):,}")
 
-def apply_filters(df):
-    if df.empty:
-        return df
+st.divider()
 
-    if selected_site != "All" and "working_site" in df.columns:
-        df = df[df["working_site"] == selected_site]
+# ---------------- QUICK SUMMARY ----------------
+summary_main = pd.DataFrame({
+    "Field": ["Labour","Machine","Maintenance","Material"],
+    "Total Records": [len(lab), len(mac), len(mnt), len(mat)],
+    "Total Cost": [
+        lab.get("total_cost", pd.Series()).sum(),
+        0,
+        mnt.get("total_cost", pd.Series()).sum(),
+        mat.get("total_cost", pd.Series()).sum()
+    ]
+})
 
-    if selected_date == "Today" and "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
-        df = df[df["date"] == pd.Timestamp.today().date()]
+st.subheader("📊 Quick Summary (فوری خلاصہ)")
+st.dataframe(format_numbers(summary_main), use_container_width=True)
 
-    return df
-
-for key in data:
-    data[key] = apply_filters(data[key])
-
-# ---------------- OVERVIEW ----------------
-total_labours = len(data["👷 Labour"])
-total_machines = len(data["🚜 Machines"])
-
-total_cost = 0
-for k in ["📦 Material", "👷 Labour", "🛠 Maintenance"]:
-    if "total_cost" in data[k].columns:
-        total_cost += data[k]["total_cost"].sum()
-
-c1, c2, c3 = st.columns(3)
-c1.metric("👷 Total Labour", total_labours)
-c2.metric("🚜 Total Machines", total_machines)
-c3.metric("💰 Total Cost", f"{int(total_cost):,}")
+fig_main = px.bar(summary_main, x="Field", y="Total Cost")
+st.plotly_chart(fig_main, use_container_width=True, key="main_chart")
 
 st.divider()
 
 # ---------------- TABS ----------------
 tabs = st.tabs(list(TABLES.keys()))
 
-for i, tab_name in enumerate(TABLES.keys()):
+for i, name in enumerate(TABLES.keys()):
     with tabs[i]:
-        df = data[tab_name]
-
-        st.subheader(tab_name)
+        df = data[name]
 
         if df.empty:
-            st.warning("No data available")
+            st.warning("No Data")
             continue
 
+        st.subheader(name)
+
+        # ---------- FILTER ----------
+        col1, col2, col3 = st.columns(3)
+
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"], errors="coerce")
+
+            start = col1.date_input("Start Date", df["date"].min(), key=f"start_{name}")
+            end = col2.date_input("End Date", df["date"].max(), key=f"end_{name}")
+
+            df = df[(df["date"] >= pd.to_datetime(start)) & (df["date"] <= pd.to_datetime(end))]
+
+        if name == "📦 Material":
+            val = col3.multiselect("Material", df["material"].unique(), key=f"mat_{name}")
+            if val:
+                df = df[df["material"].isin(val)]
+
+        elif name == "👷 Labour":
+            val = col3.multiselect("Labour", df["labour_name"].unique(), key=f"lab_{name}")
+            if val:
+                df = df[df["labour_name"].isin(val)]
+
+        elif name == "🚜 Machines":
+            val = col3.multiselect("Machine", df["machine_id"].unique(), key=f"mac_{name}")
+            if val:
+                df = df[df["machine_id"].isin(val)]
+
+        elif name == "🛠 Maintenance":
+            val = col3.multiselect("Machine", df["machine_id"].unique(), key=f"mnt_{name}")
+            if val:
+                df = df[df["machine_id"].isin(val)]
+
+        st.divider()
+
+        # ---------- METRICS ----------
         c1, c2, c3 = st.columns(3)
 
-        # ---------------- METRICS ----------------
-        if tab_name == "📦 Material":
+        if name == "📦 Material":
             c1.metric("Materials", df["material"].nunique())
             c2.metric("Total Cost", f"{df['total_cost'].sum():,.0f}")
             c3.metric("Total Tons", f"{df['tons'].sum():,.1f}")
 
-        elif tab_name == "👷 Labour":
+            summary = df.groupby("material").agg({"tons":"sum","total_cost":"sum"}).reset_index()
+
+        elif name == "👷 Labour":
             c1.metric("Labours", df["labour_id"].nunique())
             c2.metric("Total Cost", f"{df['total_cost'].sum():,.0f}")
             c3.metric("Working Days", df["working_days"].sum())
 
-        elif tab_name == "🚜 Machines":
+            summary = df.groupby("labour_name").agg({
+                "working_days":"sum",
+                "labour_rating":"mean",
+                "total_cost":"sum",
+                "labour_number":"first"
+            }).reset_index()
+
+        elif name == "🚜 Machines":
             c1.metric("Machines", df["machine_id"].nunique())
             c2.metric("Working Time", df["working_time"].sum())
             c3.metric("Idle Time", df["idle_time"].sum())
 
-        elif tab_name == "🛠 Maintenance":
+            summary = df.groupby(["machine_id","machine_name"]).agg({
+                "working_time":"sum",
+                "idle_time":"sum",
+                "fuel_cost":"sum"
+            }).reset_index()
+
+        elif name == "🛠 Maintenance":
             c1.metric("Machines", df["machine_id"].nunique())
             c2.metric("Total Cost", f"{df['total_cost'].sum():,.0f}")
             c3.metric("Repairs", df["machine_fault"].count())
 
-        elif tab_name == "📈 Progress":
-            c1.metric("Entries", len(df))
-            c2.metric("Avg Progress", f"{df['progress_percentage'].mean():.1f}%")
-            c3.metric("Max Progress", f"{df['progress_percentage'].max()}%")
+            summary = df.groupby("machine_id").agg({
+                "total_cost":"sum",
+                "repair_cost":"sum",
+                "maintenance_cost":"sum"
+            }).reset_index()
 
-        st.divider()
+        summary = summary.sort_values(summary.columns[-1], ascending=False)
+        summary["rank"] = range(1, len(summary)+1)
 
-        # ---------------- TOP DATA ----------------
-        st.subheader("🏆 Top Data")
+        st.subheader("📊 Summary")
+        st.dataframe(format_numbers(summary), use_container_width=True)
 
-        if tab_name == "📦 Material":
-            top = df.groupby("material")["tons"].sum().nlargest(10).reset_index()
-            st.dataframe(top)
+        # ---------- TREND ----------
+        if "date" in df.columns and "total_cost" in df.columns:
+            daily = df.groupby("date")["total_cost"].sum().reset_index()
+            daily["Moving Avg"] = daily["total_cost"].rolling(3).mean()
 
-        elif tab_name == "👷 Labour":
-            top = df.sort_values("labour_rating", ascending=False).head(10)
-            st.dataframe(top[["labour_name", "labour_rating", "labour_number"]])
+            fig = px.line(daily, x="date", y=["total_cost","Moving Avg"])
+            st.plotly_chart(fig, use_container_width=True, key=f"trend_{name}")
 
-        elif tab_name == "🚜 Machines":
-            top = df.sort_values("working_time", ascending=False).head(10)
-            st.dataframe(top[["machine_id", "working_time"]])
+        # ---------- TOP / BOTTOM ----------
+        st.subheader("🏆 Top vs Bottom")
 
-        elif tab_name == "🛠 Maintenance":
-            top = df.groupby("machine_id")["total_cost"].sum().nlargest(10).reset_index()
-            st.dataframe(top)
+        mid = len(summary)//2
+        col1, col2 = st.columns(2)
+        col1.dataframe(format_numbers(summary.head(mid)), use_container_width=True)
+        col2.dataframe(format_numbers(summary.tail(mid)), use_container_width=True)
 
-        st.divider()
+        # ---------- BAR ----------
+        st.subheader("📊 Comparison")
 
-        # ---------------- CHARTS ----------------
-        st.subheader("📊 Charts")
+        num_col = summary.select_dtypes(include="number").columns[-1]
+        fig = px.bar(summary.head(10), x=summary.columns[1], y=num_col)
+        st.plotly_chart(fig, use_container_width=True, key=f"bar_{name}")
 
-        numeric_cols = df.select_dtypes(include="number").columns
-
-        for col in numeric_cols[:2]:
-            fig = px.bar(df, y=col, title=col)
-            st.plotly_chart(fig, use_container_width=True)
-
-        # ---------------- ADVANCED INSIGHTS ----------------
-        st.subheader("🧠 Detailed Insights")
+        # ---------- ALERTS ----------
+        st.subheader("🚨 Smart Alerts & Insights")
 
         try:
-            insights = []
+            if "idle_time" in df.columns:
+                idle = df["idle_time"].sum()
+                working = df["working_time"].sum() + 1
+                ratio = idle / working
 
-            if tab_name == "📦 Material":
-                total_tons = df["tons"].sum()
-                total_cost_mat = df["total_cost"].sum()
+                if ratio > 0.5:
+                    st.error(f"""
+                            🚨 **High Machine Idle Time Detected**
 
-                top_mat = df.groupby("material")["tons"].sum().idxmax()
-                bottom_mat = df.groupby("material")["tons"].sum().idxmin()
+                            - Idle Time is **{ratio:.2%}** of working time  
+                            - Machines are staying unused for long periods  
 
-                insights.append(f"🔝 Top material: {top_mat}")
-                insights.append(f"📉 Lowest usage material: {bottom_mat}")
-                insights.append(f"💰 Total cost: {total_cost_mat:,.0f}")
-                insights.append(f"⚖️ Cost per ton: {(total_cost_mat/(total_tons+1)):.2f}")
-
-            elif tab_name == "👷 Labour":
-                best = df.sort_values("labour_rating", ascending=False).iloc[0]
-                worst = df.sort_values("labour_rating").iloc[0]
-
-                insights.append(f"⭐ Best worker: {best['labour_name']}")
-                insights.append(f"⚠️ Lowest performer: {worst['labour_name']}")
-                insights.append(f"💰 Total labour cost: {df['total_cost'].sum():,.0f}")
-
-            elif tab_name == "🚜 Machines":
-                most_used = df.sort_values("working_time", ascending=False).iloc[0]
-                least_used = df.sort_values("working_time").iloc[0]
-
-                idle_ratio = df["idle_time"].sum()/(df["working_time"].sum()+1)
-
-                insights.append(f"🚜 Most used machine: {most_used['machine_id']}")
-                insights.append(f"📉 Least used machine: {least_used['machine_id']}")
-                insights.append(f"📊 Idle ratio: {idle_ratio:.2%}")
-
-            elif tab_name == "🛠 Maintenance":
-                most_expensive = df.groupby("machine_id")["total_cost"].sum().idxmax()
-
-                insights.append(f"💸 Most expensive machine: {most_expensive}")
-                insights.append(f"💰 Total maintenance cost: {df['total_cost'].sum():,.0f}")
-
-            elif tab_name == "📈 Progress":
-                avg = df["progress_percentage"].mean()
-
-                insights.append(f"📊 Average progress: {avg:.1f}%")
-
-                if avg < 50:
-                    insights.append("⚠️ Project behind schedule")
+                            👉 **Problem:** Wasted resources & reduced efficiency  
+                            👉 **Solution:** Improve scheduling or reallocate machines  
+                            """)
                 else:
-                    insights.append("✅ Project progressing well")
+                    st.success("✅ Machines are being used efficiently")
 
-            for ins in insights:
-                st.write(f"• {ins}")
+            if "labour_rating" in df.columns:
+                avg = df["labour_rating"].mean()
 
-        except Exception as e:
-            st.warning(f"Insight error: {e}")
+                if avg < 3:
+                    st.error(f"""
+                            🚨 **Low Labour Performance**
 
-        # ---------------- RAW ----------------
+                                - Average Rating: {avg:.2f}/5  
+
+                                👉 **Problem:** Workers performance is below expected  
+                                👉 **Solution:** Provide training or review workforce  
+                                """)
+                else:
+                    st.success("✅ Labour performance is good")
+
+        except:
+            pass
+
+        # ---------- RAW ----------
         st.subheader("📄 Raw Data")
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(format_numbers(df), use_container_width=True)
+
+# ---------------- GUIDE ----------------
+st.markdown("---")
+st.markdown("## 📘 Complete Dashboard Guide (مکمل رہنمائی)")
+
+st.markdown("""
+### 🔹 English (Detailed Guide)
+
+This dashboard helps you monitor your construction project:
+
+**1. Main Dashboard**
+- Shows total labour, machines, and cost
+- Gives quick overall business health
+
+**2. Tabs**
+- Each tab represents a dataset:
+  - Material → what you used
+  - Labour → workforce performance
+  - Machines → usage efficiency
+  - Maintenance → repair costs
+
+**3. Filters**
+- Select date range to analyze specific time
+- Use dropdowns to focus on specific items
+
+**4. Charts**
+- Line chart → shows trends over time
+- Bar chart → compares top performers
+
+**5. Alerts**
+- Red alert = problem detected  
+- Green alert = everything is fine  
+- Alerts explain:
+  - What is wrong  
+  - Why it matters  
+  - How to fix it  
+
+---
+
+### 🔹 اردو (تفصیلی رہنمائی)
+
+یہ ڈیش بورڈ آپ کے پروجیکٹ کو مانیٹر کرنے میں مدد دیتا ہے:
+
+**1. مین ڈیش بورڈ**
+- کل مزدور، مشینیں اور لاگت دکھاتا ہے
+
+**2. ٹیبز**
+- ہر ٹیب ایک ڈیٹا سیٹ ہے:
+  - مواد
+  - مزدور
+  - مشینیں
+  - مرمت
+
+**3. فلٹرز**
+- تاریخ منتخب کریں
+- مخصوص چیزیں دیکھیں
+
+**4. چارٹس**
+- لائن چارٹ → وقت کے ساتھ تبدیلی
+- بار چارٹ → موازنہ
+
+**5. الرٹس**
+- سرخ = مسئلہ  
+- سبز = سب ٹھیک  
+- ہر الرٹ بتاتا ہے:
+  - مسئلہ کیا ہے  
+  - کیوں اہم ہے  
+  - کیسے حل کریں  
+""")
 
 # ---------------- FOOTER ----------------
 st.markdown("---")
